@@ -1,16 +1,22 @@
 /*
- * Provocation & Revenge — PCIbex norming experiment
+ * Provocation & Revenge — three-stage PCIbex norming experiment
+ * ------------------------------------------------------------------
+ * Stage 1: prediction from the sentence prefix
+ * Stage 2: interpretation after the complete sentence
+ * Stage 3: subjective report of whether the expectation changed
  *
- * Put this script in data_includes.
- * Put sentences_mvb_8_versions.csv in chunk_includes / Resources.
+ * Data:
+ *   chunk_includes/sentences_mvb_8_versions.csv
+ *
+ * Script:
+ *   data_includes/Provocation_Revenge_PCIbex.js
  *
  * Only generated_version = both_male / both_female is used.
- * Each participant sees one same-gender condition per list_item.
  */
 
 PennController.ResetPrefix(null);
 
-// Uncomment only when the experiment is ready to publish.
+// Uncomment only before publishing.
 // DebugOff();
 
 // ============================================================
@@ -18,15 +24,19 @@ PennController.ResetPrefix(null);
 // ============================================================
 
 const DATA_FILE = "sentences_mvb_8_versions.csv";
-const RESPONSE_TIMEOUT_MS = 30000;
+
+const PREFIX_TIMEOUT_MS = 30000;
+const FULL_SENTENCE_TIMEOUT_MS = 30000;
+const CHANGE_REPORT_TIMEOUT_MS = 15000;
+const STAGE_TRANSITION_MS = 250;
 const INTER_TRIAL_INTERVAL_MS = 300;
 
-// Replace this with the completion code for the new Prolific study.
+// Replace with the completion code for the new Prolific study.
 const confirmationLink =
   "https://app.prolific.com/submissions/complete?cc=CNAM6AA1";
 
 // ============================================================
-// PARTICIPANT IDS AND TIMING
+// PARTICIPANT IDS AND WHOLE-EXPERIMENT TIMING
 // ============================================================
 
 window.PROLIFIC_ID =
@@ -47,7 +57,7 @@ window.__normingStart = null;
 window.__normingEnd = null;
 window.__normingDuration = null;
 
-window.__normingState = {};
+window.__threeStageState = {};
 
 Header()
   .log("PROLIFIC_ID", window.PROLIFIC_ID)
@@ -59,29 +69,33 @@ Header()
 // ============================================================
 
 Header(
-  newFunction("inject_norming_css", function () {
-    if (
-      document.getElementById(
-        "provocation-revenge-norming-css"
-      )
-    ) {
+  newFunction("inject_three_stage_css", function () {
+    if (document.getElementById("three-stage-norming-css")) {
       return;
     }
 
-    const style =
-      document.createElement("style");
-
-    style.id =
-      "provocation-revenge-norming-css";
+    const style = document.createElement("style");
+    style.id = "three-stage-norming-css";
 
     style.innerHTML = `
       body {
-        margin-top: 42px !important;
+        margin-top: 40px !important;
         font-family: Arial, Helvetica, sans-serif;
       }
 
+      .stage-label {
+        max-width: 1000px;
+        margin: 0 auto 18px auto;
+        font-size: 19px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-align: center;
+        text-transform: uppercase;
+      }
+
+      .norming-fragment,
       .norming-sentence {
-        max-width: 1050px;
+        max-width: 1100px;
         margin: 0 auto 34px auto;
         font-size: 30px;
         line-height: 1.55;
@@ -89,18 +103,19 @@ Header(
       }
 
       .norming-question {
-        max-width: 950px;
-        margin: 0 auto 22px auto;
-        font-size: 28px;
+        max-width: 980px;
+        margin: 0 auto 24px auto;
+        font-size: 27px;
         line-height: 1.45;
         font-weight: 600;
         text-align: center;
       }
 
       .norming-hint {
-        margin-top: 18px;
-        font-size: 20px;
-        line-height: 1.4;
+        max-width: 950px;
+        margin: 18px auto 0 auto;
+        font-size: 19px;
+        line-height: 1.45;
         font-style: italic;
         text-align: center;
       }
@@ -111,13 +126,11 @@ Header(
 );
 
 // ============================================================
-// BASIC HELPERS
+// GENERAL HELPERS
 // ============================================================
 
 function cleanCell(value) {
-  return String(
-    value == null ? "" : value
-  )
+  return String(value == null ? "" : value)
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -129,12 +142,10 @@ function stripFinalPunctuation(value) {
 }
 
 function capitalizeFirst(value) {
-  const text =
-    cleanCell(value);
+  const text = cleanCell(value);
 
   return text
-    ? text.charAt(0).toUpperCase() +
-        text.slice(1)
+    ? text.charAt(0).toUpperCase() + text.slice(1)
     : "";
 }
 
@@ -148,10 +159,7 @@ function escapeHTML(value) {
 }
 
 function sanitizeId(value) {
-  return String(value).replace(
-    /[^A-Za-z0-9_-]/g,
-    "_"
-  );
+  return String(value).replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
 // ============================================================
@@ -159,11 +167,10 @@ function sanitizeId(value) {
 // ============================================================
 
 /*
- * Exact overrides for forms where changing only the determiner
- * is not enough.
+ * Exact corrections for weak masculine nouns where changing only
+ * the determiner is insufficient.
  *
- * Extend this dictionary if the full CSV contains additional
- * weak masculine nouns.
+ * Extend this dictionary when additional such nouns occur in the CSV.
  */
 const NOMINATIVE_NP_OVERRIDES = {
   "male|den löwen": "Der Löwe",
@@ -195,91 +202,76 @@ const NOMINATIVE_NP_OVERRIDES = {
 };
 
 const MASCULINE_NOMINATIVE_DETERMINERS = {
-  // Definite articles
   der: "der",
   den: "der",
   dem: "der",
   des: "der",
 
-  // Indefinite articles
   ein: "ein",
   einen: "ein",
   einem: "ein",
   eines: "ein",
 
-  // kein
   kein: "kein",
   keinen: "kein",
   keinem: "kein",
   keines: "kein",
 
-  // mein
   mein: "mein",
   meinen: "mein",
   meinem: "mein",
   meines: "mein",
 
-  // dein
   dein: "dein",
   deinen: "dein",
   deinem: "dein",
   deines: "dein",
 
-  // sein
   sein: "sein",
   seinen: "sein",
   seinem: "sein",
   seines: "sein",
 
-  // ihr
   ihr: "ihr",
   ihren: "ihr",
   ihrem: "ihr",
   ihres: "ihr",
 
-  // unser
   unser: "unser",
   unseren: "unser",
   unserem: "unser",
   unseres: "unser",
 
-  // euer
   euer: "euer",
   euren: "euer",
   eurem: "euer",
   eures: "euer",
 
-  // dieser
   dieser: "dieser",
   diesen: "dieser",
   diesem: "dieser",
   dieses: "dieser",
 
-  // jeder
   jeder: "jeder",
   jeden: "jeder",
   jedem: "jeder",
   jedes: "jeder",
 
-  // jener
   jener: "jener",
   jenen: "jener",
   jenem: "jener",
   jenes: "jener",
 
-  // welcher
   welcher: "welcher",
   welchen: "welcher",
   welchem: "welcher",
   welches: "welcher",
 
-  // solcher
   solcher: "solcher",
   solchen: "solcher",
   solchem: "solcher",
   solches: "solcher",
 
-  // mancher
   mancher: "mancher",
   manchen: "mancher",
   manchem: "mancher",
@@ -287,115 +279,68 @@ const MASCULINE_NOMINATIVE_DETERMINERS = {
 };
 
 const FEMININE_NOMINATIVE_DETERMINERS = {
-  // Definite articles
   die: "die",
 
-  /*
-   * Feminine dative:
-   *
-   * der Lehrerin → die Lehrerin
-   */
+  // Feminine dative: der Lehrerin -> die Lehrerin
   der: "die",
 
-  // Indefinite articles
   eine: "eine",
   einer: "eine",
 
-  // kein
   keine: "keine",
   keiner: "keine",
 
-  // mein
   meine: "meine",
   meiner: "meine",
 
-  // dein
   deine: "deine",
   deiner: "deine",
 
-  // sein
   seine: "seine",
   seiner: "seine",
 
-  // ihr
   ihre: "ihre",
   ihrer: "ihre",
 
-  // unser
   unsere: "unsere",
   unserer: "unsere",
 
-  // euer
   eure: "eure",
   eurer: "eure",
 
-  // diese
   diese: "diese",
   dieser: "diese",
 
-  // jede
   jede: "jede",
   jeder: "jede",
 
-  // jene
   jene: "jene",
   jener: "jene",
 
-  // welche
   welche: "welche",
   welcher: "welche",
 
-  // solche
   solche: "solche",
   solcher: "solche",
 
-  // manche
   manche: "manche",
   mancher: "manche"
 };
 
-/*
- * Convert a sentence-internal NP into a standalone nominative
- * answer label.
- *
- * Examples:
- *
- * male:
- *   den Lehrer → Der Lehrer
- *   dem Lehrer → Der Lehrer
- *   der Lehrer → Der Lehrer
- *
- * female:
- *   die Lehrerin → Die Lehrerin
- *   der Lehrerin → Die Lehrerin
- *   einer Lehrerin → Eine Lehrerin
- */
-function toStandaloneNominative(
-  value,
-  gender
-) {
-  const source =
-    stripFinalPunctuation(value);
+function toStandaloneNominative(value, gender) {
+  const source = stripFinalPunctuation(value);
 
   if (!source) {
     return "";
   }
 
-  if (
-    gender !== "male" &&
-    gender !== "female"
-  ) {
+  if (gender !== "male" && gender !== "female") {
     throw new Error(
-      "Unknown gender passed to " +
-      "toStandaloneNominative: " +
-      gender
+      "Unknown gender passed to toStandaloneNominative: " + gender
     );
   }
 
-  const overrideKey =
-    gender +
-    "|" +
-    source.toLowerCase();
+  const overrideKey = gender + "|" + source.toLowerCase();
 
   if (
     Object.prototype.hasOwnProperty.call(
@@ -403,85 +348,85 @@ function toStandaloneNominative(
       overrideKey
     )
   ) {
-    return (
-      NOMINATIVE_NP_OVERRIDES[
-        overrideKey
-      ]
-    );
+    return NOMINATIVE_NP_OVERRIDES[overrideKey];
   }
 
-  const words =
-    source.split(/\s+/);
+  const words = source.split(/\s+/);
+  const originalDeterminer = words.shift();
+  const determiner = originalDeterminer.toLowerCase();
+  const rest = words.join(" ");
 
-  const originalDeterminer =
-    words.shift();
-
-  const determiner =
-    originalDeterminer.toLowerCase();
-
-  const rest =
-    words.join(" ");
-
-  const map =
+  const determinerMap =
     gender === "male"
       ? MASCULINE_NOMINATIVE_DETERMINERS
       : FEMININE_NOMINATIVE_DETERMINERS;
 
   const nominativeDeterminer =
-    Object.prototype.hasOwnProperty.call(
-      map,
-      determiner
-    )
-      ? map[determiner]
+    Object.prototype.hasOwnProperty.call(determinerMap, determiner)
+      ? determinerMap[determiner]
       : originalDeterminer;
 
   return capitalizeFirst(
     rest
-      ? nominativeDeterminer +
-          " " +
-          rest
+      ? nominativeDeterminer + " " + rest
       : nominativeDeterminer
   );
 }
 
 // ============================================================
-// QUESTION AND MATERIAL GENERATION
+// MATERIAL GENERATION
 // ============================================================
+
+function buildPredictionFragment(row) {
+  const np1 = stripFinalPunctuation(row.NP1);
+  const verb = stripFinalPunctuation(row.verb);
+
+  /*
+   * row.NP2 may deliberately contain a separable verb particle and comma:
+   *
+   *   den Lehrer auf,
+   *
+   * Therefore it is used here exactly as it occurs in the selected row.
+   */
+  const np2 = cleanCell(row.NP2);
+  const because = stripFinalPunctuation(row.because);
+  const pronoun = stripFinalPunctuation(row.pronoun);
+
+  const fragment = [
+    np1,
+    verb,
+    np2,
+    because,
+    pronoun,
+    "…"
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return fragment;
+}
 
 function buildNormingQuestion(row) {
   const prepositionalPhrase =
-    stripFinalPunctuation(
-      row["präposition"]
-    );
+    stripFinalPunctuation(row["präposition"]);
 
   const predicateWithVerb =
-    stripFinalPunctuation(
-      row["adjective + verb"]
-    );
+    stripFinalPunctuation(row["adjective + verb"]);
 
-  /*
-   * The final word is treated as the finite verb:
-   *
-   * unüberhörbar war
-   * → verb: war
-   * → predicate: unüberhörbar
-   */
-  const parts =
-    predicateWithVerb
-      .split(/\s+/)
-      .filter(Boolean);
+  const parts = predicateWithVerb
+    .split(/\s+/)
+    .filter(Boolean);
 
   if (parts.length >= 2) {
-    const finiteVerb =
-      parts.pop().toLowerCase();
+    const finiteVerb = parts.pop().toLowerCase();
+    const predicate = parts.join(" ");
 
-    const predicate =
-      parts.join(" ");
-
-    const middle =
-      prepositionalPhrase
-        ? " " + prepositionalPhrase
-        : "";
+    const middle = prepositionalPhrase
+      ? " " + prepositionalPhrase
+      : "";
 
     return (
       `Wer ${finiteVerb}${middle} ${predicate}?`
@@ -490,34 +435,27 @@ function buildNormingQuestion(row) {
     );
   }
 
-  const pronoun =
-    cleanCell(row.pronoun);
+  const pronoun = cleanCell(row.pronoun);
 
   if (pronoun) {
-    return (
-      `Auf wen bezieht sich das Pronomen „${pronoun}“?`
-    );
+    return `Auf wen bezieht sich das Pronomen „${pronoun}“?`;
   }
 
   return (
-    "Auf welche der beiden Personen " +
-    "bezieht sich der weil-Satz?"
+    "Auf welche der beiden Personen bezieht sich der weil-Satz?"
   );
 }
 
-function getNormingMaterials(row) {
+function getThreeStageMaterials(row) {
   const generatedVersion =
-    cleanCell(
-      row.generated_version
-    ).toLowerCase();
+    cleanCell(row.generated_version).toLowerCase();
 
   if (
     generatedVersion !== "both_male" &&
     generatedVersion !== "both_female"
   ) {
     throw new Error(
-      "Expected both_male or both_female, " +
-      "but received: " +
+      "Expected both_male or both_female, but received: " +
       generatedVersion
     );
   }
@@ -527,15 +465,6 @@ function getNormingMaterials(row) {
       ? "male"
       : "female";
 
-  /*
-   * Use the explicitly gendered columns.
-   *
-   * Do not use row.NP2 here, because row.NP2 can contain:
-   *
-   * den Lehrer auf,
-   *
-   * including a separable verb particle.
-   */
   const np1Source =
     genderCondition === "male"
       ? row["NP1 - male"]
@@ -546,38 +475,28 @@ function getNormingMaterials(row) {
       ? row["NP2 - male"]
       : row["NP2 - female"];
 
-  const sentence =
-    cleanCell(
-      row["Generated-Sentence"]
-    );
-
-  const question =
-    buildNormingQuestion(row);
+  const fragment = buildPredictionFragment(row);
+  const fullSentence = cleanCell(row["Generated-Sentence"]);
+  const fullQuestion = buildNormingQuestion(row);
 
   const np1Text =
-    toStandaloneNominative(
-      np1Source,
-      genderCondition
-    );
+    toStandaloneNominative(np1Source, genderCondition);
 
   const np2Text =
-    toStandaloneNominative(
-      np2Source,
-      genderCondition
-    );
+    toStandaloneNominative(np2Source, genderCondition);
 
   const missing = [];
 
-  if (!sentence) {
-    missing.push(
-      "Generated-Sentence"
-    );
+  if (!fragment) {
+    missing.push("prediction fragment");
   }
 
-  if (!question) {
-    missing.push(
-      "generated question"
-    );
+  if (!fullSentence) {
+    missing.push("Generated-Sentence");
+  }
+
+  if (!fullQuestion) {
+    missing.push("generated full-sentence question");
   }
 
   if (!np1Text) {
@@ -608,36 +527,26 @@ function getNormingMaterials(row) {
   }
 
   return {
-    sentence,
-    question,
+    fragment,
+    fullSentence,
+    fullQuestion,
     np1Text,
     np2Text,
     generatedVersion,
     genderCondition,
-
-    rawNP1Source:
-      cleanCell(np1Source),
-
-    rawNP2Source:
-      cleanCell(np2Source)
+    rawNP1Source: cleanCell(np1Source),
+    rawNP2Source: cleanCell(np2Source)
   };
 }
 
 function getDesignReferent(row) {
-  const causality =
-    cleanCell(
-      row.Causality
-    ).toUpperCase();
+  const causality = cleanCell(row.Causality).toUpperCase();
 
-  if (
-    causality.indexOf("NP1") === 0
-  ) {
+  if (causality.indexOf("NP1") === 0) {
     return "NP1";
   }
 
-  if (
-    causality.indexOf("NP2") === 0
-  ) {
+  if (causality.indexOf("NP2") === 0) {
     return "NP2";
   }
 
@@ -649,107 +558,62 @@ function getDesignReferent(row) {
 // ============================================================
 
 function hashStringToUint32(value) {
-  const text =
-    String(value || "");
+  const text = String(value || "");
+  let hash = 2166136261;
 
-  let hash =
-    2166136261;
-
-  for (
-    let i = 0;
-    i < text.length;
-    i++
-  ) {
-    hash ^=
-      text.charCodeAt(i);
-
-    hash =
-      Math.imul(
-        hash,
-        16777619
-      );
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
   }
 
   return hash >>> 0;
 }
 
 function mulberry32(seed) {
-  let state =
-    seed >>> 0;
+  let state = seed >>> 0;
 
   return function () {
-    state +=
-      0x6d2b79f5;
+    state += 0x6d2b79f5;
 
-    let value =
-      Math.imul(
-        state ^
-          (state >>> 15),
-        1 | state
-      );
+    let value = Math.imul(
+      state ^ (state >>> 15),
+      1 | state
+    );
 
     value ^=
       value +
       Math.imul(
-        value ^
-          (value >>> 7),
+        value ^ (value >>> 7),
         61 | value
       );
 
     return (
-      (
-        (
-          value ^
-          (value >>> 14)
-        ) >>> 0
-      ) /
+      ((value ^ (value >>> 14)) >>> 0) /
       4294967296
     );
   };
 }
 
-function fisherYatesSeeded(
-  array,
-  randomFunction
-) {
-  for (
-    let i = array.length - 1;
-    i > 0;
-    i--
-  ) {
-    const j =
-      Math.floor(
-        randomFunction() *
-          (i + 1)
-      );
+function fisherYatesSeeded(array, randomFunction) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(
+      randomFunction() * (i + 1)
+    );
 
-    [
-      array[i],
-      array[j]
-    ] = [
-      array[j],
-      array[i]
-    ];
+    [array[i], array[j]] = [array[j], array[i]];
   }
 
   return array;
 }
 
 function causalityRank(row) {
-  const causality =
-    cleanCell(
-      row.Causality
-    ).toUpperCase();
+  const causality = cleanCell(row.Causality).toUpperCase();
 
-  if (
-    causality.indexOf("NP1") === 0
-  ) {
+  if (causality.indexOf("NP1") === 0) {
     return 0;
   }
 
-  if (
-    causality.indexOf("NP2") === 0
-  ) {
+  if (causality.indexOf("NP2") === 0) {
     return 1;
   }
 
@@ -758,37 +622,20 @@ function causalityRank(row) {
 
 function genderRank(row) {
   const version =
-    cleanCell(
-      row.generated_version
-    ).toLowerCase();
+    cleanCell(row.generated_version).toLowerCase();
 
-  if (
-    version === "both_male"
-  ) {
+  if (version === "both_male") {
     return 0;
   }
 
-  if (
-    version === "both_female"
-  ) {
+  if (version === "both_female") {
     return 1;
   }
 
   return 2;
 }
 
-/*
- * Each list_item should contain exactly:
- *
- * NP1-Causality + both_male
- * NP1-Causality + both_female
- * NP2-Causality + both_male
- * NP2-Causality + both_female
- */
-function validateSameGenderVariants(
-  listItem,
-  rows
-) {
+function validateSameGenderVariants(listItem, rows) {
   const expected = [
     "NP1-Causality|both_male",
     "NP1-Causality|both_female",
@@ -796,44 +643,25 @@ function validateSameGenderVariants(
     "NP2-Causality|both_female"
   ];
 
-  const found =
-    rows.map(function (row) {
-      return (
-        cleanCell(
-          row.Causality
-        ) +
-        "|" +
-        cleanCell(
-          row.generated_version
-        ).toLowerCase()
-      );
-    });
-
-  const missing =
-    expected.filter(
-      function (condition) {
-        return (
-          !found.includes(
-            condition
-          )
-        );
-      }
+  const found = rows.map(function (row) {
+    return (
+      cleanCell(row.Causality) +
+      "|" +
+      cleanCell(row.generated_version).toLowerCase()
     );
+  });
 
-  const duplicates =
-    found.filter(
-      function (
-        condition,
-        index,
-        array
-      ) {
-        return (
-          array.indexOf(
-            condition
-          ) !== index
-        );
-      }
-    );
+  const missing = expected.filter(function (condition) {
+    return !found.includes(condition);
+  });
+
+  const duplicates = found.filter(function (
+    condition,
+    index,
+    array
+  ) {
+    return array.indexOf(condition) !== index;
+  });
 
   if (
     rows.length !== 4 ||
@@ -853,117 +681,152 @@ function validateSameGenderVariants(
 }
 
 // ============================================================
-// RESPONSE-TIME STATE
+// THREE-STAGE RESPONSE STATE
 // ============================================================
 
-function initializeTrialState(
-  stateKey
-) {
-  window.__normingState[
-    stateKey
-  ] = {
-    onset_epoch_ms: null,
-    onset_performance_ms: null,
-    response_epoch_ms: null,
-    response_code: "",
-    response_text: "",
-    response_side: "",
-    rt_ms: null,
-    timed_out: 0
+function initializeThreeStageState(stateKey) {
+  window.__threeStageState[stateKey] = {
+    trial_start_epoch_ms: Date.now(),
+
+    prefix_onset_epoch_ms: null,
+    prefix_onset_performance_ms: null,
+    prefix_response_epoch_ms: null,
+    prefix_response_code: "",
+    prefix_response_text: "",
+    prefix_response_side: "",
+    prefix_rt_ms: null,
+    prefix_timed_out: 0,
+
+    full_onset_epoch_ms: null,
+    full_onset_performance_ms: null,
+    full_response_epoch_ms: null,
+    full_response_code: "",
+    full_response_text: "",
+    full_response_side: "",
+    full_rt_ms: null,
+    full_timed_out: 0,
+
+    change_onset_epoch_ms: null,
+    change_onset_performance_ms: null,
+    change_response_epoch_ms: null,
+    change_response_code: "",
+    change_response_text: "",
+    change_response_side: "",
+    change_rt_ms: null,
+    change_timed_out: 0,
+
+    objective_changed: "",
+    subjective_changed: "",
+    change_report_matches_choices: "",
+
+    trial_end_epoch_ms: null,
+    trial_duration_ms: null
   };
 }
 
-function markTrialOnset(
-  stateKey
-) {
-  const state =
-    window.__normingState[
-      stateKey
-    ];
+function markStageOnset(stateKey, stage) {
+  const state = window.__threeStageState[stateKey];
 
-  state.onset_epoch_ms =
-    Date.now();
-
-  state.onset_performance_ms =
+  state[stage + "_onset_epoch_ms"] = Date.now();
+  state[stage + "_onset_performance_ms"] =
     performance.now();
 }
 
-function recordChoice(
+function recordStageChoice(
   stateKey,
+  stage,
   code,
   text,
   side
 ) {
-  const state =
-    window.__normingState[
-      stateKey
-    ];
+  const state = window.__threeStageState[stateKey];
 
-  if (
-    !state ||
-    state.response_code
-  ) {
+  if (!state || state[stage + "_response_code"]) {
     return;
   }
 
-  state.response_epoch_ms =
-    Date.now();
+  state[stage + "_response_epoch_ms"] = Date.now();
+  state[stage + "_response_code"] = code;
+  state[stage + "_response_text"] = text;
+  state[stage + "_response_side"] = side;
 
-  state.response_code =
-    code;
-
-  state.response_text =
-    text;
-
-  state.response_side =
-    side;
-
-  state.rt_ms =
-    Math.round(
-      performance.now() -
-      state.onset_performance_ms
-    );
+  state[stage + "_rt_ms"] = Math.round(
+    performance.now() -
+    state[stage + "_onset_performance_ms"]
+  );
 }
 
-function finalizeTrialState(
-  stateKey
+function finalizeStageTimeout(
+  stateKey,
+  stage,
+  timeoutMs
 ) {
-  const state =
-    window.__normingState[
-      stateKey
-    ];
+  const state = window.__threeStageState[stateKey];
 
-  if (
-    !state.response_code
-  ) {
-    state.response_epoch_ms =
-      Date.now();
-
-    state.response_code =
-      "TIMEOUT";
-
-    state.response_text =
-      "";
-
-    state.response_side =
-      "";
-
-    state.rt_ms =
-      RESPONSE_TIMEOUT_MS;
-
-    state.timed_out =
-      1;
+  if (!state[stage + "_response_code"]) {
+    state[stage + "_response_epoch_ms"] = Date.now();
+    state[stage + "_response_code"] = "TIMEOUT";
+    state[stage + "_response_text"] = "";
+    state[stage + "_response_side"] = "";
+    state[stage + "_rt_ms"] = timeoutMs;
+    state[stage + "_timed_out"] = 1;
   }
 }
 
-function stateValue(
-  stateKey,
-  field
-) {
-  const state =
-    window.__normingState[
-      stateKey
-    ] || {};
+function computeObjectiveChange(stateKey) {
+  const state = window.__threeStageState[stateKey];
+
+  const prefixCode = state.prefix_response_code;
+  const fullCode = state.full_response_code;
+
+  if (
+    (prefixCode === "NP1" || prefixCode === "NP2") &&
+    (fullCode === "NP1" || fullCode === "NP2")
+  ) {
+    state.objective_changed =
+      prefixCode === fullCode ? 0 : 1;
+  }
+  else {
+    state.objective_changed = "";
+  }
+}
+
+function finalizeThreeStageTrial(stateKey) {
+  const state = window.__threeStageState[stateKey];
+
+  if (state.change_response_code === "YES") {
+    state.subjective_changed = 1;
+  }
+  else if (state.change_response_code === "NO") {
+    state.subjective_changed = 0;
+  }
+  else {
+    state.subjective_changed = "";
+  }
+
+  if (
+    (state.objective_changed === 0 ||
+      state.objective_changed === 1) &&
+    (state.subjective_changed === 0 ||
+      state.subjective_changed === 1)
+  ) {
+    state.change_report_matches_choices =
+      state.objective_changed === state.subjective_changed
+        ? 1
+        : 0;
+  }
+  else {
+    state.change_report_matches_choices = "";
+  }
+
+  state.trial_end_epoch_ms = Date.now();
+  state.trial_duration_ms =
+    state.trial_end_epoch_ms -
+    state.trial_start_epoch_ms;
+}
+
+function threeStageValue(stateKey, field) {
+  const state = window.__threeStageState[stateKey] || {};
 
   return state[field] == null
     ? ""
@@ -971,93 +834,69 @@ function stateValue(
 }
 
 // ============================================================
-// REUSABLE NORMING TRIAL
+// REUSABLE THREE-STAGE TRIAL
 // ============================================================
 
-function createNormingChoiceTrial(
-  trialLabel,
-  config
-) {
-  const uid =
-    sanitizeId(
-      config.uid
-    );
+function createThreeStageTrial(trialLabel, config) {
+  const uid = sanitizeId(config.uid);
+  const stateKey = String(config.stateKey);
 
-  const stateKey =
-    String(
-      config.stateKey
-    );
+  const prefixLeftButton = "prefix_left_" + uid;
+  const prefixRightButton = "prefix_right_" + uid;
+  const prefixTimer = "prefix_timer_" + uid;
 
-  const leftButtonName =
-    "left_" + uid;
+  const fullLeftButton = "full_left_" + uid;
+  const fullRightButton = "full_right_" + uid;
+  const fullTimer = "full_timer_" + uid;
 
-  const rightButtonName =
-    "right_" + uid;
-
-  const timerName =
-    "response_window_" +
-    uid;
-
-  const leftText =
-    config.leftText;
-
-  const rightText =
-    config.rightText;
-
-  const leftCode =
-    config.leftCode;
-
-  const rightCode =
-    config.rightCode;
+  const changeLeftButton = "change_left_" + uid;
+  const changeRightButton = "change_right_" + uid;
+  const changeTimer = "change_timer_" + uid;
 
   const commands = [
     newFunction(
-      "initialize_state_" + uid,
+      "initialize_three_stage_" + uid,
       function () {
-        initializeTrialState(
-          stateKey
-        );
+        initializeThreeStageState(stateKey);
 
         if (
           config.isCritical &&
           window.__normingStart === null
         ) {
-          window.__normingStart =
-            Date.now();
+          window.__normingStart = Date.now();
         }
       }
     ).call(),
 
+    // --------------------------------------------------------
+    // STAGE 1: PREFIX PREDICTION
+    // --------------------------------------------------------
+
     newText(
-      "sentence_" + uid,
-      (
-        '<div class="norming-sentence">' +
-        escapeHTML(
-          config.sentence
-        ) +
-        "</div>"
-      )
+      "prefix_stage_label_" + uid,
+      '<div class="stage-label">Teil 1: Ihre Erwartung</div>'
     ).print(),
 
     newText(
-      "question_" + uid,
-      (
-        '<div class="norming-question">' +
-        escapeHTML(
-          config.question
-        ) +
-        "</div>"
-      )
+      "prefix_fragment_" + uid,
+      '<div class="norming-fragment">' +
+      escapeHTML(config.fragment) +
+      "</div>"
     ).print(),
 
-    newTimer(
-      timerName,
-      RESPONSE_TIMEOUT_MS
-    ),
+    newText(
+      "prefix_question_" + uid,
+      '<div class="norming-question">' +
+      "Auf wen wird sich die folgende Beschreibung Ihrer " +
+      "Erwartung nach am ehesten beziehen?" +
+      "</div>"
+    ).print(),
+
+    newTimer(prefixTimer, PREFIX_TIMEOUT_MS),
 
     newButton(
-      leftButtonName,
-      leftText
+      prefixLeftButton,
+      config.prefixLeftText
     )
       .css({
         width: "380px",
@@ -1066,43 +905,31 @@ function createNormingChoiceTrial(
         "font-size": "24px",
         "line-height": "1.25",
         cursor: "pointer",
-        border:
-          "2px solid #777",
-        "border-radius":
-          "9px",
-        background:
-          "#ffffff"
+        border: "2px solid #777",
+        "border-radius": "9px",
+        background: "#ffffff"
       })
-      .log("first")
       .callback(
         newFunction(
-          "record_left_" + uid,
+          "record_prefix_left_" + uid,
           function () {
-            recordChoice(
+            recordStageChoice(
               stateKey,
-              leftCode,
-              leftText,
+              "prefix",
+              config.prefixLeftCode,
+              config.prefixLeftText,
               "left"
             );
           }
         ).call(),
-
-        getButton(
-          leftButtonName
-        ).disable(),
-
-        getButton(
-          rightButtonName
-        ).disable(),
-
-        getTimer(
-          timerName
-        ).stop()
+        getButton(prefixLeftButton).disable(),
+        getButton(prefixRightButton).disable(),
+        getTimer(prefixTimer).stop()
       ),
 
     newButton(
-      rightButtonName,
-      rightText
+      prefixRightButton,
+      config.prefixRightText
     )
       .css({
         width: "380px",
@@ -1111,103 +938,369 @@ function createNormingChoiceTrial(
         "font-size": "24px",
         "line-height": "1.25",
         cursor: "pointer",
-        border:
-          "2px solid #777",
-        "border-radius":
-          "9px",
-        background:
-          "#ffffff"
+        border: "2px solid #777",
+        "border-radius": "9px",
+        background: "#ffffff"
       })
-      .log("first")
       .callback(
         newFunction(
-          "record_right_" + uid,
+          "record_prefix_right_" + uid,
           function () {
-            recordChoice(
+            recordStageChoice(
               stateKey,
-              rightCode,
-              rightText,
+              "prefix",
+              config.prefixRightCode,
+              config.prefixRightText,
               "right"
             );
           }
         ).call(),
-
-        getButton(
-          leftButtonName
-        ).disable(),
-
-        getButton(
-          rightButtonName
-        ).disable(),
-
-        getTimer(
-          timerName
-        ).stop()
+        getButton(prefixLeftButton).disable(),
+        getButton(prefixRightButton).disable(),
+        getTimer(prefixTimer).stop()
       ),
 
     newCanvas(
-      "answers_" + uid,
+      "prefix_answers_" + uid,
       1000,
       115
     )
       .add(
         85,
         15,
-        getButton(
-          leftButtonName
-        )
+        getButton(prefixLeftButton)
       )
       .add(
         535,
         15,
-        getButton(
-          rightButtonName
-        )
+        getButton(prefixRightButton)
       )
       .center()
       .print(),
 
     newText(
-      "hint_" + uid,
-      (
-        '<div class="norming-hint">' +
-        "Bitte wählen Sie die spontan " +
-        "natürlichere Interpretation." +
-        "</div>"
-      )
+      "prefix_hint_" + uid,
+      '<div class="norming-hint">' +
+      "Bitte antworten Sie aufgrund Ihrer spontanen Erwartung. " +
+      "Sie sehen den vollständigen Satz anschließend." +
+      "</div>"
     ).print(),
 
-    /*
-     * The RT clock starts after the sentence,
-     * question and buttons have been displayed.
-     */
     newFunction(
-      "mark_onset_" + uid,
+      "mark_prefix_onset_" + uid,
       function () {
-        markTrialOnset(
-          stateKey
-        );
+        markStageOnset(stateKey, "prefix");
       }
     ).call(),
 
-    /*
-     * This timer stops either when:
-     *
-     * 1. the participant selects a button; or
-     * 2. 30 seconds have elapsed.
-     */
-    getTimer(
-      timerName
-    )
+    getTimer(prefixTimer)
       .start()
       .wait(),
 
     newFunction(
-      "finalize_state_" + uid,
+      "finalize_prefix_" + uid,
       function () {
-        finalizeTrialState(
-          stateKey
+        finalizeStageTimeout(
+          stateKey,
+          "prefix",
+          PREFIX_TIMEOUT_MS
         );
+      }
+    ).call(),
+
+    clear(),
+
+    newTimer(
+      "transition_one_" + uid,
+      STAGE_TRANSITION_MS
+    )
+      .start()
+      .wait(),
+
+    // --------------------------------------------------------
+    // STAGE 2: FULL-SENTENCE INTERPRETATION
+    // --------------------------------------------------------
+
+    newText(
+      "full_stage_label_" + uid,
+      '<div class="stage-label">Teil 2: Der vollständige Satz</div>'
+    ).print(),
+
+    newText(
+      "full_sentence_" + uid,
+      '<div class="norming-sentence">' +
+      escapeHTML(config.fullSentence) +
+      "</div>"
+    ).print(),
+
+    newText(
+      "full_question_" + uid,
+      '<div class="norming-question">' +
+      escapeHTML(config.fullQuestion) +
+      "</div>"
+    ).print(),
+
+    newTimer(
+      fullTimer,
+      FULL_SENTENCE_TIMEOUT_MS
+    ),
+
+    newButton(
+      fullLeftButton,
+      config.fullLeftText
+    )
+      .css({
+        width: "380px",
+        "min-height": "72px",
+        padding: "14px 22px",
+        "font-size": "24px",
+        "line-height": "1.25",
+        cursor: "pointer",
+        border: "2px solid #777",
+        "border-radius": "9px",
+        background: "#ffffff"
+      })
+      .callback(
+        newFunction(
+          "record_full_left_" + uid,
+          function () {
+            recordStageChoice(
+              stateKey,
+              "full",
+              config.fullLeftCode,
+              config.fullLeftText,
+              "left"
+            );
+          }
+        ).call(),
+        getButton(fullLeftButton).disable(),
+        getButton(fullRightButton).disable(),
+        getTimer(fullTimer).stop()
+      ),
+
+    newButton(
+      fullRightButton,
+      config.fullRightText
+    )
+      .css({
+        width: "380px",
+        "min-height": "72px",
+        padding: "14px 22px",
+        "font-size": "24px",
+        "line-height": "1.25",
+        cursor: "pointer",
+        border: "2px solid #777",
+        "border-radius": "9px",
+        background: "#ffffff"
+      })
+      .callback(
+        newFunction(
+          "record_full_right_" + uid,
+          function () {
+            recordStageChoice(
+              stateKey,
+              "full",
+              config.fullRightCode,
+              config.fullRightText,
+              "right"
+            );
+          }
+        ).call(),
+        getButton(fullLeftButton).disable(),
+        getButton(fullRightButton).disable(),
+        getTimer(fullTimer).stop()
+      ),
+
+    newCanvas(
+      "full_answers_" + uid,
+      1000,
+      115
+    )
+      .add(
+        85,
+        15,
+        getButton(fullLeftButton)
+      )
+      .add(
+        535,
+        15,
+        getButton(fullRightButton)
+      )
+      .center()
+      .print(),
+
+    newText(
+      "full_hint_" + uid,
+      '<div class="norming-hint">' +
+      "Bitte wählen Sie nun die Interpretation des vollständigen Satzes." +
+      "</div>"
+    ).print(),
+
+    newFunction(
+      "mark_full_onset_" + uid,
+      function () {
+        markStageOnset(stateKey, "full");
+      }
+    ).call(),
+
+    getTimer(fullTimer)
+      .start()
+      .wait(),
+
+    newFunction(
+      "finalize_full_" + uid,
+      function () {
+        finalizeStageTimeout(
+          stateKey,
+          "full",
+          FULL_SENTENCE_TIMEOUT_MS
+        );
+
+        computeObjectiveChange(stateKey);
+      }
+    ).call(),
+
+    clear(),
+
+    newTimer(
+      "transition_two_" + uid,
+      STAGE_TRANSITION_MS
+    )
+      .start()
+      .wait(),
+
+    // --------------------------------------------------------
+    // STAGE 3: SUBJECTIVE CHANGE REPORT
+    // --------------------------------------------------------
+
+    newText(
+      "change_stage_label_" + uid,
+      '<div class="stage-label">Teil 3: Rückblick</div>'
+    ).print(),
+
+    newText(
+      "change_question_" + uid,
+      '<div class="norming-question">' +
+      "Hat sich Ihre ursprüngliche Erwartung durch den " +
+      "vollständigen Satz geändert?" +
+      "</div>"
+    ).print(),
+
+    newTimer(
+      changeTimer,
+      CHANGE_REPORT_TIMEOUT_MS
+    ),
+
+    newButton(
+      changeLeftButton,
+      config.changeLeftText
+    )
+      .css({
+        width: "300px",
+        "min-height": "68px",
+        padding: "14px 22px",
+        "font-size": "24px",
+        cursor: "pointer",
+        border: "2px solid #777",
+        "border-radius": "9px",
+        background: "#ffffff"
+      })
+      .callback(
+        newFunction(
+          "record_change_left_" + uid,
+          function () {
+            recordStageChoice(
+              stateKey,
+              "change",
+              config.changeLeftCode,
+              config.changeLeftText,
+              "left"
+            );
+          }
+        ).call(),
+        getButton(changeLeftButton).disable(),
+        getButton(changeRightButton).disable(),
+        getTimer(changeTimer).stop()
+      ),
+
+    newButton(
+      changeRightButton,
+      config.changeRightText
+    )
+      .css({
+        width: "300px",
+        "min-height": "68px",
+        padding: "14px 22px",
+        "font-size": "24px",
+        cursor: "pointer",
+        border: "2px solid #777",
+        "border-radius": "9px",
+        background: "#ffffff"
+      })
+      .callback(
+        newFunction(
+          "record_change_right_" + uid,
+          function () {
+            recordStageChoice(
+              stateKey,
+              "change",
+              config.changeRightCode,
+              config.changeRightText,
+              "right"
+            );
+          }
+        ).call(),
+        getButton(changeLeftButton).disable(),
+        getButton(changeRightButton).disable(),
+        getTimer(changeTimer).stop()
+      ),
+
+    newCanvas(
+      "change_answers_" + uid,
+      850,
+      110
+    )
+      .add(
+        100,
+        15,
+        getButton(changeLeftButton)
+      )
+      .add(
+        450,
+        15,
+        getButton(changeRightButton)
+      )
+      .center()
+      .print(),
+
+    newText(
+      "change_hint_" + uid,
+      '<div class="norming-hint">' +
+      "Beantworten Sie diese Frage danach, wie Sie den Ablauf selbst erlebt haben." +
+      "</div>"
+    ).print(),
+
+    newFunction(
+      "mark_change_onset_" + uid,
+      function () {
+        markStageOnset(stateKey, "change");
+      }
+    ).call(),
+
+    getTimer(changeTimer)
+      .start()
+      .wait(),
+
+    newFunction(
+      "finalize_change_" + uid,
+      function () {
+        finalizeStageTimeout(
+          stateKey,
+          "change",
+          CHANGE_REPORT_TIMEOUT_MS
+        );
+
+        finalizeThreeStageTrial(stateKey);
       }
     ).call(),
 
@@ -1221,198 +1314,306 @@ function createNormingChoiceTrial(
       .wait()
   ];
 
-  const trial =
-    trialLabel
-      ? newTrial(
-          trialLabel,
-          ...commands
-        )
-      : newTrial(
-          ...commands
-        );
+  const trial = trialLabel
+    ? newTrial(trialLabel, ...commands)
+    : newTrial(...commands);
 
   return trial
-    .log(
-      "is_practice",
-      config.isPractice
-        ? 1
-        : 0
-    )
-    .log(
-      "trial_position",
-      config.trialPosition ||
-        ""
-    )
+    .log("is_practice", config.isPractice ? 1 : 0)
+    .log("trial_position", config.trialPosition || "")
     .log(
       "latin_list",
-      config.listId == null
-        ? ""
-        : config.listId
+      config.listId == null ? "" : config.listId
     )
     .log(
       "latin_target_index",
-      config.targetIndex == null
-        ? ""
-        : config.targetIndex
+      config.targetIndex == null ? "" : config.targetIndex
     )
     .log(
       "n_same_gender_variants",
-      config.nVariants == null
-        ? ""
-        : config.nVariants
+      config.nVariants == null ? "" : config.nVariants
     )
-    .log(
-      "list_item",
-      config.listItem || ""
-    )
-    .log(
-      "item_number",
-      config.itemNumber || ""
-    )
+    .log("list_item", config.listItem || "")
+    .log("item_number", config.itemNumber || "")
     .log(
       "original_row_index",
-      config.originalRowIndex ||
-        ""
+      config.originalRowIndex || ""
     )
     .log(
       "generated_version",
-      config.generatedVersion ||
-        ""
+      config.generatedVersion || ""
     )
     .log(
       "gender_condition",
-      config.genderCondition ||
-        ""
+      config.genderCondition || ""
     )
+    .log("causality", config.causality || "")
+    .log("design_referent", config.designReferent || "")
+    .log("verb_bias", config.verbBias || "")
+    .log("adj_amb", config.adjAmb || "")
+    .log("pronoun", config.pronoun || "")
+
+    .log("prediction_fragment", config.fragment)
+    .log("full_sentence", config.fullSentence)
+    .log("full_question", config.fullQuestion)
+
+    .log("np1_answer", config.np1Text)
+    .log("np2_answer", config.np2Text)
+    .log("raw_np1_source", config.rawNP1Source || "")
+    .log("raw_np2_source", config.rawNP2Source || "")
+
+    .log("prefix_left_code", config.prefixLeftCode)
+    .log("prefix_left_text", config.prefixLeftText)
+    .log("prefix_right_code", config.prefixRightCode)
+    .log("prefix_right_text", config.prefixRightText)
     .log(
-      "causality",
-      config.causality || ""
+      "prefix_sides_swapped",
+      config.prefixSidesSwapped ? 1 : 0
     )
+
+    .log("full_left_code", config.fullLeftCode)
+    .log("full_left_text", config.fullLeftText)
+    .log("full_right_code", config.fullRightCode)
+    .log("full_right_text", config.fullRightText)
     .log(
-      "design_referent",
-      config.designReferent ||
-        ""
+      "full_sides_swapped",
+      config.fullSidesSwapped ? 1 : 0
     )
+
+    .log("change_left_code", config.changeLeftCode)
+    .log("change_left_text", config.changeLeftText)
+    .log("change_right_code", config.changeRightCode)
+    .log("change_right_text", config.changeRightText)
     .log(
-      "verb_bias",
-      config.verbBias || ""
+      "change_sides_swapped",
+      config.changeSidesSwapped ? 1 : 0
     )
+
     .log(
-      "adj_amb",
-      config.adjAmb || ""
-    )
-    .log(
-      "pronoun",
-      config.pronoun || ""
-    )
-    .log(
-      "sentence",
-      config.sentence
-    )
-    .log(
-      "question",
-      config.question
-    )
-    .log(
-      "np1_answer",
-      config.np1Text
-    )
-    .log(
-      "np2_answer",
-      config.np2Text
-    )
-    .log(
-      "raw_np1_source",
-      config.rawNP1Source ||
-        ""
-    )
-    .log(
-      "raw_np2_source",
-      config.rawNP2Source ||
-        ""
-    )
-    .log(
-      "left_answer_code",
-      leftCode
-    )
-    .log(
-      "left_answer_text",
-      leftText
-    )
-    .log(
-      "right_answer_code",
-      rightCode
-    )
-    .log(
-      "right_answer_text",
-      rightText
-    )
-    .log(
-      "answer_sides_swapped",
-      config.swapSides
-        ? 1
-        : 0
-    )
-    .log(
-      "question_onset_epoch_ms",
+      "prefix_onset_epoch_ms",
       function () {
-        return stateValue(
+        return threeStageValue(
           stateKey,
-          "onset_epoch_ms"
+          "prefix_onset_epoch_ms"
         );
       }
     )
     .log(
-      "response_epoch_ms",
+      "prefix_response_epoch_ms",
       function () {
-        return stateValue(
+        return threeStageValue(
           stateKey,
-          "response_epoch_ms"
+          "prefix_response_epoch_ms"
         );
       }
     )
     .log(
-      "response_code",
+      "prefix_response_code",
       function () {
-        return stateValue(
+        return threeStageValue(
           stateKey,
-          "response_code"
+          "prefix_response_code"
         );
       }
     )
     .log(
-      "response_text",
+      "prefix_response_text",
       function () {
-        return stateValue(
+        return threeStageValue(
           stateKey,
-          "response_text"
+          "prefix_response_text"
         );
       }
     )
     .log(
-      "response_side",
+      "prefix_response_side",
       function () {
-        return stateValue(
+        return threeStageValue(
           stateKey,
-          "response_side"
+          "prefix_response_side"
         );
       }
     )
     .log(
-      "response_rt_ms",
+      "prefix_rt_ms",
       function () {
-        return stateValue(
+        return threeStageValue(
           stateKey,
-          "rt_ms"
+          "prefix_rt_ms"
         );
       }
     )
     .log(
-      "timed_out",
+      "prefix_timed_out",
       function () {
-        return stateValue(
+        return threeStageValue(
           stateKey,
-          "timed_out"
+          "prefix_timed_out"
+        );
+      }
+    )
+
+    .log(
+      "full_onset_epoch_ms",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "full_onset_epoch_ms"
+        );
+      }
+    )
+    .log(
+      "full_response_epoch_ms",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "full_response_epoch_ms"
+        );
+      }
+    )
+    .log(
+      "full_response_code",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "full_response_code"
+        );
+      }
+    )
+    .log(
+      "full_response_text",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "full_response_text"
+        );
+      }
+    )
+    .log(
+      "full_response_side",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "full_response_side"
+        );
+      }
+    )
+    .log(
+      "full_rt_ms",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "full_rt_ms"
+        );
+      }
+    )
+    .log(
+      "full_timed_out",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "full_timed_out"
+        );
+      }
+    )
+
+    .log(
+      "change_onset_epoch_ms",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "change_onset_epoch_ms"
+        );
+      }
+    )
+    .log(
+      "change_response_epoch_ms",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "change_response_epoch_ms"
+        );
+      }
+    )
+    .log(
+      "change_response_code",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "change_response_code"
+        );
+      }
+    )
+    .log(
+      "change_response_text",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "change_response_text"
+        );
+      }
+    )
+    .log(
+      "change_response_side",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "change_response_side"
+        );
+      }
+    )
+    .log(
+      "change_rt_ms",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "change_rt_ms"
+        );
+      }
+    )
+    .log(
+      "change_timed_out",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "change_timed_out"
+        );
+      }
+    )
+
+    .log(
+      "objective_changed",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "objective_changed"
+        );
+      }
+    )
+    .log(
+      "subjective_changed",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "subjective_changed"
+        );
+      }
+    )
+    .log(
+      "change_report_matches_choices",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "change_report_matches_choices"
+        );
+      }
+    )
+    .log(
+      "three_stage_trial_duration_ms",
+      function () {
+        return threeStageValue(
+          stateKey,
+          "trial_duration_ms"
         );
       }
     );
@@ -1453,8 +1654,7 @@ newTrial(
       width: "720px"
     })
     .checkboxWarning(
-      "Sie müssen zustimmen, " +
-      "bevor Sie fortfahren können."
+      "Sie müssen zustimmen, bevor Sie fortfahren können."
     )
     .print(),
 
@@ -1467,24 +1667,18 @@ newTrial(
       padding: "12px 24px",
       "font-size": "16px",
       cursor: "pointer",
-      "background-color":
-        "#a51e37",
+      "background-color": "#a51e37",
       color: "white",
       border: "none",
-      "border-radius":
-        "4px"
+      "border-radius": "4px"
     })
     .center()
     .print()
     .wait(
-      getHtml(
-        "consent_form"
-      )
+      getHtml("consent_form")
         .test.complete()
         .failure(
-          getHtml(
-            "consent_form"
-          ).warn()
+          getHtml("consent_form").warn()
         )
     )
 );
@@ -1504,62 +1698,52 @@ newTrial(
     })
     .cssContainer({
       width: "900px",
-      margin:
-        "0 auto 18px auto"
+      margin: "0 auto 18px auto"
     })
     .print(),
 
   newText(
     "inst_title",
-    (
-      "<div style='" +
-      "text-align:center;" +
-      "font-size:32px;" +
-      "font-weight:700;" +
-      "'>" +
-      "Willkommen!" +
-      "</div>"
-    )
+    "<div style='text-align:center; font-size:32px; font-weight:700;'>" +
+    "Willkommen!" +
+    "</div>"
   ),
 
   newText(
     "inst_1",
-    "In dieser Studie sehen Sie " +
-      "jeweils einen vollständigen " +
-      "deutschen Satz."
+    "Jede Aufgabe besteht aus drei kurzen Teilen."
   ),
 
   newText(
     "inst_2",
-    "Unter dem Satz steht eine Frage " +
-      "dazu, auf welche der beiden " +
-      "genannten Personen oder " +
-      "Lebewesen sich die Beschreibung " +
-      "im weil-Satz Ihrer Meinung nach " +
-      "bezieht."
+    "Zuerst sehen Sie nur den Anfang eines Satzes. " +
+    "Bitte entscheiden Sie, auf welche der beiden genannten " +
+    "Personen oder Lebewesen sich die folgende Beschreibung " +
+    "Ihrer Erwartung nach beziehen wird."
   ),
 
   newText(
     "inst_3",
-    "Klicken Sie auf die Antwort, " +
-      "die Ihrer spontanen Interpretation " +
-      "am ehesten entspricht."
+    "Danach sehen Sie den vollständigen Satz und beantworten " +
+    "eine konkrete Frage zu seiner Interpretation."
   ),
 
   newText(
     "inst_4",
-    "Es gibt keine Rückmeldung zu " +
-      "richtig oder falsch. Uns interessiert " +
-      "Ihre persönliche sprachliche " +
-      "Einschätzung."
+    "Zum Schluss geben Sie an, ob sich Ihre ursprüngliche " +
+    "Erwartung durch den vollständigen Satz geändert hat."
   ),
 
   newText(
     "inst_5",
-    "Lesen Sie aufmerksam, aber überlegen " +
-      "Sie nicht unnötig lange. Für jede " +
-      "Antwort stehen höchstens 30 Sekunden " +
-      "zur Verfügung."
+    "Es gibt keine Rückmeldung zu richtig oder falsch. " +
+    "Uns interessieren Ihre spontanen sprachlichen Erwartungen " +
+    "und Interpretationen."
+  ),
+
+  newText(
+    "inst_6",
+    "Lesen Sie aufmerksam, aber überlegen Sie nicht unnötig lange."
   ),
 
   newButton(
@@ -1581,53 +1765,46 @@ newTrial(
 // PRACTICE
 // ============================================================
 
-createNormingChoiceTrial(
+createThreeStageTrial(
   "practice",
   {
-    uid:
-      "practice_1",
+    uid: "practice_1",
+    stateKey: "practice_1",
 
-    stateKey:
-      "practice_1",
+    fragment:
+      "Die Fotografin traf die Redakteurin, weil sie …",
 
-    sentence:
-      "Die Fotografin traf " +
-      "die Redakteurin, weil sie " +
+    fullSentence:
+      "Die Fotografin traf die Redakteurin, weil sie " +
       "am Nachmittag sehr beschäftigt war.",
 
-    question:
-      "Wer war am Nachmittag " +
-      "sehr beschäftigt?",
+    fullQuestion:
+      "Wer war am Nachmittag sehr beschäftigt?",
 
-    np1Text:
-      "Die Fotografin",
+    np1Text: "Die Fotografin",
+    np2Text: "Die Redakteurin",
 
-    np2Text:
-      "Die Redakteurin",
+    prefixLeftText: "Die Fotografin",
+    prefixRightText: "Die Redakteurin",
+    prefixLeftCode: "NP1",
+    prefixRightCode: "NP2",
+    prefixSidesSwapped: false,
 
-    leftText:
-      "Die Fotografin",
+    fullLeftText: "Die Redakteurin",
+    fullRightText: "Die Fotografin",
+    fullLeftCode: "NP2",
+    fullRightCode: "NP1",
+    fullSidesSwapped: true,
 
-    rightText:
-      "Die Redakteurin",
+    changeLeftText: "Nein",
+    changeRightText: "Ja",
+    changeLeftCode: "NO",
+    changeRightCode: "YES",
+    changeSidesSwapped: true,
 
-    leftCode:
-      "NP1",
-
-    rightCode:
-      "NP2",
-
-    swapSides:
-      false,
-
-    isPractice:
-      true,
-
-    isCritical:
-      false,
-
-    trialPosition:
-      0
+    isPractice: true,
+    isCritical: false,
+    trialPosition: 0
   }
 );
 
@@ -1640,23 +1817,15 @@ newTrial(
 
   newText(
     "go_title",
-    (
-      "<div style='" +
-      "text-align:center;" +
-      "font-size:32px;" +
-      "font-weight:700;" +
-      "'>" +
-      "Hauptteil" +
-      "</div>"
-    )
+    "<div style='text-align:center; font-size:32px; font-weight:700;'>" +
+    "Hauptteil" +
+    "</div>"
   ).print(),
 
   newText(
     "go_text",
-    "Im Hauptteil funktioniert jede " +
-      "Aufgabe genauso. Bitte wählen Sie " +
-      "jeweils die Interpretation, die Ihnen " +
-      "beim Lesen am natürlichsten erscheint."
+    "Im Hauptteil funktioniert jede Aufgabe genauso. " +
+    "Bitte antworten Sie in allen drei Teilen spontan und aufmerksam."
   )
     .css({
       "font-size": "26px",
@@ -1684,19 +1853,16 @@ newTrial(
 );
 
 // ============================================================
-// LOAD SAME-GENDER CSV ROWS
+// LOAD SAME-GENDER ROWS
 // ============================================================
 
 const sameGenderItems = {};
 
 Template(
   GetTable(DATA_FILE),
-
   function (row) {
     const version =
-      cleanCell(
-        row.generated_version
-      ).toLowerCase();
+      cleanCell(row.generated_version).toLowerCase();
 
     if (
       version !== "both_male" &&
@@ -1705,32 +1871,19 @@ Template(
       return {};
     }
 
-    const listItem =
-      cleanCell(
-        row.list_item
-      );
+    const listItem = cleanCell(row.list_item);
 
     if (!listItem) {
       throw new Error(
-        "A same-gender row has no " +
-        "list_item in " +
-        DATA_FILE
+        "A same-gender row has no list_item in " + DATA_FILE
       );
     }
 
-    if (
-      !sameGenderItems[
-        listItem
-      ]
-    ) {
-      sameGenderItems[
-        listItem
-      ] = [];
+    if (!sameGenderItems[listItem]) {
+      sameGenderItems[listItem] = [];
     }
 
-    sameGenderItems[
-      listItem
-    ].push(row);
+    sameGenderItems[listItem].push(row);
 
     return {};
   }
@@ -1741,179 +1894,91 @@ Template(
 // ============================================================
 
 AddTable(
-  "build_norming_trials",
+  "build_three_stage_trials",
   "x\n1"
 );
 
 Template(
-  "build_norming_trials",
-
+  "build_three_stage_trials",
   function () {
-    const itemKeys =
-      Object.keys(
-        sameGenderItems
-      ).sort(
-        function (a, b) {
-          const aNumber =
-            Number(a);
+    const itemKeys = Object.keys(sameGenderItems).sort(
+      function (a, b) {
+        const aNumber = Number(a);
+        const bNumber = Number(b);
 
-          const bNumber =
-            Number(b);
-
-          if (
-            Number.isFinite(
-              aNumber
-            ) &&
-            Number.isFinite(
-              bNumber
-            )
-          ) {
-            return (
-              aNumber -
-              bNumber
-            );
-          }
-
-          return String(a)
-            .localeCompare(
-              String(b)
-            );
+        if (
+          Number.isFinite(aNumber) &&
+          Number.isFinite(bNumber)
+        ) {
+          return aNumber - bNumber;
         }
-      );
 
-    if (
-      itemKeys.length === 0
-    ) {
+        return String(a).localeCompare(String(b));
+      }
+    );
+
+    if (itemKeys.length === 0) {
       throw new Error(
-        "No both_male or both_female " +
-        "rows were found in " +
+        "No both_male or both_female rows were found in " +
         DATA_FILE
       );
     }
 
-    itemKeys.forEach(
-      function (itemKey) {
-        validateSameGenderVariants(
-          itemKey,
-          sameGenderItems[
-            itemKey
-          ]
-        );
+    itemKeys.forEach(function (itemKey) {
+      validateSameGenderVariants(
+        itemKey,
+        sameGenderItems[itemKey]
+      );
 
-        sameGenderItems[
-          itemKey
-        ].sort(
-          function (
-            firstRow,
-            secondRow
-          ) {
-            const causalityDifference =
-              causalityRank(
-                firstRow
-              ) -
-              causalityRank(
-                secondRow
-              );
+      sameGenderItems[itemKey].sort(
+        function (firstRow, secondRow) {
+          const causalityDifference =
+            causalityRank(firstRow) -
+            causalityRank(secondRow);
 
-            if (
-              causalityDifference !==
-              0
-            ) {
-              return (
-                causalityDifference
-              );
-            }
-
-            const genderDifference =
-              genderRank(
-                firstRow
-              ) -
-              genderRank(
-                secondRow
-              );
-
-            if (
-              genderDifference !==
-              0
-            ) {
-              return (
-                genderDifference
-              );
-            }
-
-            return (
-              Number(
-                firstRow
-                  .original_row_index ||
-                  0
-              ) -
-              Number(
-                secondRow
-                  .original_row_index ||
-                  0
-              )
-            );
+          if (causalityDifference !== 0) {
+            return causalityDifference;
           }
-        );
-      }
-    );
+
+          const genderDifference =
+            genderRank(firstRow) -
+            genderRank(secondRow);
+
+          if (genderDifference !== 0) {
+            return genderDifference;
+          }
+
+          return (
+            Number(firstRow.original_row_index || 0) -
+            Number(secondRow.original_row_index || 0)
+          );
+        }
+      );
+    });
 
     const globalSeed =
-      hashStringToUint32(
-        window.PROLIFIC_ID
-      );
+      hashStringToUint32(window.PROLIFIC_ID);
 
     const randomFunction =
-      mulberry32(
-        globalSeed
-      );
+      mulberry32(globalSeed);
 
-    /*
-     * Four expected conditions:
-     *
-     * 0 NP1 male
-     * 1 NP1 female
-     * 2 NP2 male
-     * 3 NP2 female
-     */
-    const listId =
-      globalSeed % 4;
-
+    const listId = globalSeed % 4;
     const selectedRows = [];
 
-    itemKeys.forEach(
-      function (
+    itemKeys.forEach(function (
+      itemKey,
+      itemIndex
+    ) {
+      const variants = sameGenderItems[itemKey];
+      const targetIndex = (itemIndex + listId) % 4;
+
+      selectedRows.push({
         itemKey,
-        itemIndex
-      ) {
-        const variants =
-          sameGenderItems[
-            itemKey
-          ];
-
-        const targetIndex =
-          (
-            itemIndex +
-            listId
-          ) % 4;
-
-        selectedRows.push({
-          itemKey:
-            itemKey,
-
-          row:
-            variants[
-              targetIndex
-            ],
-
-          targetIndex:
-            targetIndex,
-
-          nVariants:
-            variants.length
-        });
-      }
-    );
+        row: variants[targetIndex],
+        targetIndex,
+        nVariants: variants.length
+      });
+    });
 
     fisherYatesSeeded(
       selectedRows,
@@ -1922,179 +1987,143 @@ Template(
 
     const selectedTrials = [];
 
-    selectedRows.forEach(
-      function (
-        entry,
-        positionIndex
-      ) {
-        const row =
-          entry.row;
+    selectedRows.forEach(function (
+      entry,
+      positionIndex
+    ) {
+      const row = entry.row;
+      const materials = getThreeStageMaterials(row);
 
-        const materials =
-          getNormingMaterials(
-            row
-          );
+      const prefixSwap = randomFunction() < 0.5;
+      const fullSwap = randomFunction() < 0.5;
+      const changeSwap = randomFunction() < 0.5;
 
-        const swapSides =
-          randomFunction() <
-          0.5;
+      const prefixLeftText = prefixSwap
+        ? materials.np2Text
+        : materials.np1Text;
 
-        const leftText =
-          swapSides
-            ? materials.np2Text
-            : materials.np1Text;
+      const prefixRightText = prefixSwap
+        ? materials.np1Text
+        : materials.np2Text;
 
-        const rightText =
-          swapSides
-            ? materials.np1Text
-            : materials.np2Text;
+      const prefixLeftCode = prefixSwap
+        ? "NP2"
+        : "NP1";
 
-        const leftCode =
-          swapSides
-            ? "NP2"
-            : "NP1";
+      const prefixRightCode = prefixSwap
+        ? "NP1"
+        : "NP2";
 
-        const rightCode =
-          swapSides
-            ? "NP1"
-            : "NP2";
+      const fullLeftText = fullSwap
+        ? materials.np2Text
+        : materials.np1Text;
 
-        const stateKey = [
-          "norming",
-          entry.itemKey,
-          cleanCell(
-            row.original_row_index
-          ),
-          materials.generatedVersion,
-          positionIndex + 1
-        ].join("_");
+      const fullRightText = fullSwap
+        ? materials.np1Text
+        : materials.np2Text;
 
-        const trialObject =
-          createNormingChoiceTrial(
-            null,
-            {
-              uid:
-                stateKey,
+      const fullLeftCode = fullSwap
+        ? "NP2"
+        : "NP1";
 
-              stateKey:
-                stateKey,
+      const fullRightCode = fullSwap
+        ? "NP1"
+        : "NP2";
 
-              sentence:
-                materials.sentence,
+      const changeLeftText = changeSwap
+        ? "Nein"
+        : "Ja";
 
-              question:
-                materials.question,
+      const changeRightText = changeSwap
+        ? "Ja"
+        : "Nein";
 
-              np1Text:
-                materials.np1Text,
+      const changeLeftCode = changeSwap
+        ? "NO"
+        : "YES";
 
-              np2Text:
-                materials.np2Text,
+      const changeRightCode = changeSwap
+        ? "YES"
+        : "NO";
 
-              leftText:
-                leftText,
+      const stateKey = [
+        "three_stage",
+        entry.itemKey,
+        cleanCell(row.original_row_index),
+        materials.generatedVersion,
+        positionIndex + 1
+      ].join("_");
 
-              rightText:
-                rightText,
+      const trialObject = createThreeStageTrial(
+        null,
+        {
+          uid: stateKey,
+          stateKey,
 
-              leftCode:
-                leftCode,
+          fragment: materials.fragment,
+          fullSentence: materials.fullSentence,
+          fullQuestion: materials.fullQuestion,
 
-              rightCode:
-                rightCode,
+          np1Text: materials.np1Text,
+          np2Text: materials.np2Text,
 
-              swapSides:
-                swapSides,
+          prefixLeftText,
+          prefixRightText,
+          prefixLeftCode,
+          prefixRightCode,
+          prefixSidesSwapped: prefixSwap,
 
-              isPractice:
-                false,
+          fullLeftText,
+          fullRightText,
+          fullLeftCode,
+          fullRightCode,
+          fullSidesSwapped: fullSwap,
 
-              isCritical:
-                true,
+          changeLeftText,
+          changeRightText,
+          changeLeftCode,
+          changeRightCode,
+          changeSidesSwapped: changeSwap,
 
-              trialPosition:
-                positionIndex + 1,
+          isPractice: false,
+          isCritical: true,
+          trialPosition: positionIndex + 1,
 
-              listId:
-                listId,
+          listId,
+          targetIndex: entry.targetIndex,
+          nVariants: entry.nVariants,
+          listItem: entry.itemKey,
 
-              targetIndex:
-                entry.targetIndex,
+          itemNumber: cleanCell(row.item_number),
+          originalRowIndex:
+            cleanCell(row.original_row_index),
 
-              nVariants:
-                entry.nVariants,
+          generatedVersion:
+            materials.generatedVersion,
 
-              listItem:
-                entry.itemKey,
+          genderCondition:
+            materials.genderCondition,
 
-              itemNumber:
-                cleanCell(
-                  row.item_number
-                ),
+          causality: cleanCell(row.Causality),
+          designReferent: getDesignReferent(row),
+          verbBias: cleanCell(row.verb_bias),
+          adjAmb: cleanCell(row.adj_amb),
+          pronoun: cleanCell(row.pronoun),
 
-              originalRowIndex:
-                cleanCell(
-                  row.original_row_index
-                ),
+          rawNP1Source: materials.rawNP1Source,
+          rawNP2Source: materials.rawNP2Source
+        }
+      );
 
-              generatedVersion:
-                materials
-                  .generatedVersion,
-
-              genderCondition:
-                materials
-                  .genderCondition,
-
-              causality:
-                cleanCell(
-                  row.Causality
-                ),
-
-              designReferent:
-                getDesignReferent(
-                  row
-                ),
-
-              verbBias:
-                cleanCell(
-                  row.verb_bias
-                ),
-
-              adjAmb:
-                cleanCell(
-                  row.adj_amb
-                ),
-
-              pronoun:
-                cleanCell(
-                  row.pronoun
-                ),
-
-              rawNP1Source:
-                materials
-                  .rawNP1Source,
-
-              rawNP2Source:
-                materials
-                  .rawNP2Source
-            }
-          );
-
-        selectedTrials.push([
-          "norming",
-          "PennController",
-          trialObject
-        ]);
-      }
-    );
+      selectedTrials.push([
+        "norming",
+        "PennController",
+        trialObject
+      ]);
+    });
 
     window.items =
-      (
-        window.items ||
-        []
-      ).concat(
-        selectedTrials
-      );
+      (window.items || []).concat(selectedTrials);
 
     return {};
   }
@@ -2110,13 +2139,9 @@ newTrial(
   newFunction(
     "store_norming_time",
     function () {
-      window.__normingEnd =
-        Date.now();
+      window.__normingEnd = Date.now();
 
-      if (
-        window.__normingStart !==
-        null
-      ) {
+      if (window.__normingStart !== null) {
         window.__normingDuration =
           window.__normingEnd -
           window.__normingStart;
@@ -2127,48 +2152,33 @@ newTrial(
   .log(
     "norming_start_ms",
     function () {
-      return (
-        window.__normingStart ==
-        null
-          ? ""
-          : window.__normingStart
-      );
+      return window.__normingStart == null
+        ? ""
+        : window.__normingStart;
     }
   )
   .log(
     "norming_end_ms",
     function () {
-      return (
-        window.__normingEnd ==
-        null
-          ? ""
-          : window.__normingEnd
-      );
+      return window.__normingEnd == null
+        ? ""
+        : window.__normingEnd;
     }
   )
   .log(
     "norming_duration_ms",
     function () {
-      return (
-        window.__normingDuration ==
-        null
-          ? ""
-          : window.__normingDuration
-      );
+      return window.__normingDuration == null
+        ? ""
+        : window.__normingDuration;
     }
   )
   .log(
     "norming_duration_sec",
     function () {
-      return (
-        window.__normingDuration ==
-        null
-          ? ""
-          : (
-              window.__normingDuration /
-              1000
-            ).toFixed(3)
-      );
+      return window.__normingDuration == null
+        ? ""
+        : (window.__normingDuration / 1000).toFixed(3);
     }
   );
 
@@ -2181,22 +2191,15 @@ newTrial(
 
   newText(
     "conclude_title",
-    (
-      "<div style='" +
-      "text-align:center;" +
-      "font-size:32px;" +
-      "font-weight:700;" +
-      "'>" +
-      "Hauptteil abgeschlossen" +
-      "</div>"
-    )
+    "<div style='text-align:center; font-size:32px; font-weight:700;'>" +
+    "Hauptteil abgeschlossen" +
+    "</div>"
   ).print(),
 
   newText(
     "conclude_text",
-    "Vielen Dank! Bitte füllen Sie " +
-      "nun noch die kurzen " +
-      "Abschlussformulare aus."
+    "Vielen Dank! Bitte füllen Sie nun noch die kurzen " +
+    "Abschlussformulare aus."
   )
     .css({
       "font-size": "26px",
@@ -2233,9 +2236,7 @@ newTrial(
       width: "720px"
     })
     .inputWarning(
-      "Sie müssen alle Fragen " +
-      "beantworten, bevor Sie " +
-      "fortfahren können."
+      "Sie müssen alle Fragen beantworten, bevor Sie fortfahren können."
     )
     .print()
     .log(),
@@ -2247,20 +2248,16 @@ newTrial(
     .center()
     .print()
     .wait(
-      getHtml(
-        "exit_form"
-      )
+      getHtml("exit_form")
         .test.complete()
         .failure(
-          getHtml(
-            "exit_form"
-          ).warn()
+          getHtml("exit_form").warn()
         )
     )
 );
 
 // ============================================================
-// DEMOGRAPHIC FORM
+// DEMOGRAPHICS
 // ============================================================
 
 newTrial(
@@ -2274,9 +2271,7 @@ newTrial(
       width: "720px"
     })
     .inputWarning(
-      "Sie müssen alle Fragen " +
-      "beantworten, bevor Sie " +
-      "fortfahren können."
+      "Sie müssen alle Fragen beantworten, bevor Sie fortfahren können."
     )
     .print()
     .log(),
@@ -2288,14 +2283,10 @@ newTrial(
     .center()
     .print()
     .wait(
-      getHtml(
-        "demo_form"
-      )
+      getHtml("demo_form")
         .test.complete()
         .failure(
-          getHtml(
-            "demo_form"
-          ).warn()
+          getHtml("demo_form").warn()
         )
     )
 );
@@ -2335,9 +2326,7 @@ newTrial(
   newFunction(
     "store_total_time",
     function () {
-      window.__expEnd =
-        Date.now();
-
+      window.__expEnd = Date.now();
       window.__expDuration =
         window.__expEnd -
         window.__expStart;
@@ -2347,33 +2336,26 @@ newTrial(
   .log(
     "exp_start_ms",
     function () {
-      return (
-        window.__expStart
-      );
+      return window.__expStart;
     }
   )
   .log(
     "exp_end_ms",
     function () {
-      return (
-        window.__expEnd
-      );
+      return window.__expEnd;
     }
   )
   .log(
     "exp_duration_ms",
     function () {
-      return (
-        window.__expDuration
-      );
+      return window.__expDuration;
     }
   )
   .log(
     "exp_duration_sec",
     function () {
       return (
-        window.__expDuration /
-        1000
+        window.__expDuration / 1000
       ).toFixed(3);
     }
   );
@@ -2394,22 +2376,16 @@ newTrial(
 
   newText(
     "prolific_link",
-    (
-      "<a href='" +
-      confirmationLink +
-      "' target='_blank' " +
-      "style='font-weight:bold;'>" +
-      "Klicken Sie hier für die " +
-      "Bestätigung auf Prolific" +
-      "</a>" +
-      "<p>Dieser Schritt ist notwendig, " +
-      "damit Ihre Teilnahme bestätigt wird.</p>"
-    )
+    "<a href='" +
+    confirmationLink +
+    "' target='_blank' style='font-weight:bold;'>" +
+    "Klicken Sie hier für die Bestätigung auf Prolific" +
+    "</a>" +
+    "<p>Dieser Schritt ist notwendig, damit Ihre Teilnahme " +
+    "bestätigt wird.</p>"
   )
     .center()
     .print(),
 
-  newButton(
-    "void"
-  ).wait()
+  newButton("void").wait()
 );
