@@ -1789,18 +1789,20 @@ createThreeStageTrial(
     prefixLeftCode: "NP1",
     prefixRightCode: "NP2",
     prefixSidesSwapped: false,
-
-    fullLeftText: "Die Redakteurin",
-    fullRightText: "Die Fotografin",
-    fullLeftCode: "NP2",
-    fullRightCode: "NP1",
-    fullSidesSwapped: true,
-
-    changeLeftText: "Nein",
-    changeRightText: "Ja",
-    changeLeftCode: "NO",
-    changeRightCode: "YES",
-    changeSidesSwapped: true,
+    
+    // 与第一问保持相同位置
+    fullLeftText: "Die Fotografin",
+    fullRightText: "Die Redakteurin",
+    fullLeftCode: "NP1",
+    fullRightCode: "NP2",
+    fullSidesSwapped: false,
+    
+    // 固定 Ja 左、Nein 右
+    changeLeftText: "Ja",
+    changeRightText: "Nein",
+    changeLeftCode: "YES",
+    changeRightCode: "NO",
+    changeSidesSwapped: false,
 
     isPractice: true,
     isCritical: false,
@@ -2085,7 +2087,7 @@ Template(
           changeRightText,
           changeLeftCode,
           changeRightCode,
-          changeSidesSwapped: changeSwap,
+          changeSidesSwapped: false,
 
           isPractice: false,
           isCritical: true,
