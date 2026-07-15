@@ -1994,9 +1994,15 @@ Template(
       const row = entry.row;
       const materials = getThreeStageMaterials(row);
 
-      const prefixSwap = randomFunction() < 0.5;
-      const fullSwap = randomFunction() < 0.5;
-      const changeSwap = randomFunction() < 0.5;
+      const referentSwap =
+        randomFunction() < 0.5;
+
+      // 第一问和第二问保持相同的 NP1 / NP2 位置
+      const prefixSwap =
+        referentSwap;
+
+      const fullSwap =
+        referentSwap;
 
       const prefixLeftText = prefixSwap
         ? materials.np2Text
@@ -2030,21 +2036,17 @@ Template(
         ? "NP1"
         : "NP2";
 
-      const changeLeftText = changeSwap
-        ? "Nein"
-        : "Ja";
+      const changeLeftText =
+        "Ja";
 
-      const changeRightText = changeSwap
-        ? "Ja"
-        : "Nein";
+      const changeRightText =
+        "Nein";
 
-      const changeLeftCode = changeSwap
-        ? "NO"
-        : "YES";
+      const changeLeftCode =
+        "YES";
 
-      const changeRightCode = changeSwap
-        ? "YES"
-        : "NO";
+      const changeRightCode =
+        "NO";
 
       const stateKey = [
         "three_stage",
